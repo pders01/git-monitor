@@ -118,9 +118,8 @@ fn run(
     let _watcher = watcher::spawn(repo, cli.debounce_ms, tx)?;
 
     // ── Initial git query ───────────────────────────────────────
-    let mut state = RepoState::query(repo).unwrap_or_else(|_| {
-        RepoState::empty("Failed to query git state — is this a valid repo?")
-    });
+    let mut state = RepoState::query(repo)
+        .unwrap_or_else(|_| RepoState::empty("Failed to query git state — is this a valid repo?"));
     app.recompute_visible_lines(current_files(&app, &state));
 
     // ── Main event loop ─────────────────────────────────────────

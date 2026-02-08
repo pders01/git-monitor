@@ -28,8 +28,8 @@ pub enum Screen {
 #[derive(Debug, Clone, Default)]
 pub struct SearchState {
     pub query: String,
-    pub forward: bool,            // true = /, false = ?
-    pub active: bool,             // matches exist and are navigable
+    pub forward: bool,                       // true = /, false = ?
+    pub active: bool,                        // matches exist and are navigable
     pub matches: Vec<(usize, usize, usize)>, // (line_idx, byte_start, byte_end)
     pub current_match: usize,
 }
@@ -171,11 +171,7 @@ impl App {
     /// Jump scroll to the next file header after the current position.
     pub fn next_file(&mut self) {
         let current = self.scroll as usize;
-        if let Some(&pos) = self
-            .file_header_positions
-            .iter()
-            .find(|&&p| p > current)
-        {
+        if let Some(&pos) = self.file_header_positions.iter().find(|&&p| p > current) {
             self.scroll = (pos as u16).min(self.max_scroll());
         }
     }
@@ -225,10 +221,7 @@ impl App {
     fn file_at_scroll(&self) -> Option<String> {
         let pos = self.scroll as usize;
         // Find the last file header at or before the scroll position
-        let header_idx = self
-            .file_header_positions
-            .iter()
-            .rposition(|&p| p <= pos)?;
+        let header_idx = self.file_header_positions.iter().rposition(|&p| p <= pos)?;
         let line = &self.visible_lines[self.file_header_positions[header_idx]];
         if let DiffLine::FileHeader { filename, .. } = line {
             Some(filename.clone())
@@ -290,8 +283,7 @@ impl App {
         if !self.search.active || self.search.matches.is_empty() {
             return;
         }
-        self.search.current_match =
-            (self.search.current_match + 1) % self.search.matches.len();
+        self.search.current_match = (self.search.current_match + 1) % self.search.matches.len();
         self.jump_to_current_match();
     }
 

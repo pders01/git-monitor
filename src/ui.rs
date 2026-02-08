@@ -25,7 +25,7 @@ fn draw_diff_screen(frame: &mut Frame, app: &mut App, state: &RepoState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // status bar
-            Constraint::Min(1),   // diff area
+            Constraint::Min(1),    // diff area
             Constraint::Length(1), // help bar
         ])
         .split(frame.area());
@@ -73,7 +73,7 @@ fn draw_commit_log_screen(frame: &mut Frame, app: &mut App, state: &RepoState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // status bar
-            Constraint::Min(1),   // commit list
+            Constraint::Min(1),    // commit list
             Constraint::Length(1), // help bar
         ])
         .split(frame.area());
@@ -130,14 +130,12 @@ fn draw_commit_log_screen(frame: &mut Frame, app: &mut App, state: &RepoState) {
                     .add_modifier(Modifier::BOLD),
             )));
         } else {
-            let is_search_match = app.search.active
-                && !app.search.query.is_empty()
-                && {
-                    let q = app.search.query.to_lowercase();
-                    entry.message.to_lowercase().contains(&q)
-                        || entry.author.to_lowercase().contains(&q)
-                        || entry.hash.to_lowercase().contains(&q)
-                };
+            let is_search_match = app.search.active && !app.search.query.is_empty() && {
+                let q = app.search.query.to_lowercase();
+                entry.message.to_lowercase().contains(&q)
+                    || entry.author.to_lowercase().contains(&q)
+                    || entry.hash.to_lowercase().contains(&q)
+            };
             let underline = if is_search_match {
                 Modifier::UNDERLINED
             } else {
@@ -155,26 +153,17 @@ fn draw_commit_log_screen(frame: &mut Frame, app: &mut App, state: &RepoState) {
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD | underline),
                 ),
-                Span::styled(
-                    " ".to_string(),
-                    Style::default().add_modifier(underline),
-                ),
+                Span::styled(" ".to_string(), Style::default().add_modifier(underline)),
                 Span::styled(
                     format!("{:<msg_w$}", msg_display, msg_w = msg_width),
                     Style::default().fg(Color::White).add_modifier(underline),
                 ),
-                Span::styled(
-                    "  ".to_string(),
-                    Style::default().add_modifier(underline),
-                ),
+                Span::styled("  ".to_string(), Style::default().add_modifier(underline)),
                 Span::styled(
                     format!("{:<auth_w$}", author_display, auth_w = author_width),
                     Style::default().fg(Color::Cyan).add_modifier(underline),
                 ),
-                Span::styled(
-                    "  ".to_string(),
-                    Style::default().add_modifier(underline),
-                ),
+                Span::styled("  ".to_string(), Style::default().add_modifier(underline)),
                 Span::styled(
                     entry.date_relative.clone(),
                     Style::default().fg(Color::DarkGray).add_modifier(underline),
@@ -391,10 +380,7 @@ fn render_file_header(
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            " ".to_string(),
-            bg,
-        ),
+        Span::styled(" ".to_string(), bg),
         Span::styled(
             format!("-{removed}"),
             Style::default()
