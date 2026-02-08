@@ -1,8 +1,35 @@
+use crate::diff::DiffLine;
+use crate::git::CommitEntry;
+
 /// Which diff view is currently displayed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffView {
     Unstaged,
     Staged,
+}
+
+/// Input mode — determines how keystrokes are routed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputMode {
+    Normal,
+    Search, // typing in the /? search bar
+}
+
+/// Which screen is currently visible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Screen {
+    Diff,      // current staged/unstaged diff view
+    CommitLog, // list of recent commits
+}
+
+/// Tracks the current search query, matches, and navigation cursor.
+#[derive(Debug, Clone, Default)]
+pub struct SearchState {
+    pub query: String,
+    pub forward: bool,            // true = /, false = ?
+    pub active: bool,             // matches exist and are navigable
+    pub matches: Vec<(usize, usize, usize)>, // (line_idx, byte_start, byte_end)
+    pub current_match: usize,
 }
 
 /// Central application state — owned exclusively by the main thread.
@@ -17,6 +44,22 @@ pub struct App {
     pub diff_line_count: u16,
     /// Height of the diff viewport in terminal rows (set each render).
     pub viewport_height: u16,
+
+    /// Current screen being displayed.
+    pub screen: Screen,
+    /// Current input mode.
+    pub input_mode: InputMode,
+    /// Search state.
+    pub search: SearchState,
+
+    /// Recent commits from `git log`.
+    pub commit_log: Vec<CommitEntry>,
+    /// Cursor position in the commit log list.
+    pub commit_log_selected: usize,
+
+    /// When set, the main loop should suspend the TUI and pipe this
+    /// content to the user's pager.
+    pub pager_content: Option<String>,
 }
 
 impl App {
@@ -27,6 +70,12 @@ impl App {
             scroll: 0,
             diff_line_count: 0,
             viewport_height: 0,
+            screen: Screen::Diff,
+            input_mode: InputMode::Normal,
+            search: SearchState::default(),
+            commit_log: Vec::new(),
+            commit_log_selected: 0,
+            pager_content: None,
         }
     }
 
@@ -37,6 +86,7 @@ impl App {
             DiffView::Staged => DiffView::Unstaged,
         };
         self.scroll = 0;
+        self.clear_search();
     }
 
     /// Scroll down by `n` lines, clamped to content bounds.
@@ -60,7 +110,140 @@ impl App {
         self.scroll = self.max_scroll();
     }
 
+    /// Scroll down by half a page.
+    pub fn scroll_half_down(&mut self) {
+        let half = self.viewport_height / 2;
+        self.scroll_down(half.max(1));
+    }
+
+    /// Scroll up by half a page.
+    pub fn scroll_half_up(&mut self) {
+        let half = self.viewport_height / 2;
+        self.scroll_up(half.max(1));
+    }
+
     fn max_scroll(&self) -> u16 {
         self.diff_line_count.saturating_sub(self.viewport_height)
+    }
+
+    // ── Commit log navigation ───────────────────────────────────
+
+    pub fn commit_log_down(&mut self) {
+        if !self.commit_log.is_empty() {
+            self.commit_log_selected =
+                (self.commit_log_selected + 1).min(self.commit_log.len() - 1);
+        }
+    }
+
+    pub fn commit_log_up(&mut self) {
+        self.commit_log_selected = self.commit_log_selected.saturating_sub(1);
+    }
+
+    // ── Search ──────────────────────────────────────────────────
+
+    pub fn enter_search(&mut self, forward: bool) {
+        self.input_mode = InputMode::Search;
+        self.search = SearchState {
+            query: String::new(),
+            forward,
+            active: false,
+            matches: Vec::new(),
+            current_match: 0,
+        };
+    }
+
+    pub fn search_push(&mut self, c: char) {
+        self.search.query.push(c);
+    }
+
+    pub fn search_pop(&mut self) {
+        self.search.query.pop();
+    }
+
+    /// Confirm the search query and switch back to normal mode.
+    pub fn search_confirm(&mut self, lines: &[DiffLine]) {
+        self.input_mode = InputMode::Normal;
+        self.recompute_matches(lines);
+        if !self.search.matches.is_empty() {
+            self.search.active = true;
+            self.search.current_match = if self.search.forward {
+                self.first_match_from(self.scroll as usize)
+            } else {
+                self.last_match_before(self.scroll as usize + self.viewport_height as usize)
+            };
+            self.jump_to_current_match();
+        }
+    }
+
+    pub fn search_next(&mut self) {
+        if !self.search.active || self.search.matches.is_empty() {
+            return;
+        }
+        self.search.current_match =
+            (self.search.current_match + 1) % self.search.matches.len();
+        self.jump_to_current_match();
+    }
+
+    pub fn search_prev(&mut self) {
+        if !self.search.active || self.search.matches.is_empty() {
+            return;
+        }
+        let len = self.search.matches.len();
+        self.search.current_match = if self.search.current_match == 0 {
+            len - 1
+        } else {
+            self.search.current_match - 1
+        };
+        self.jump_to_current_match();
+    }
+
+    pub fn clear_search(&mut self) {
+        self.input_mode = InputMode::Normal;
+        self.search = SearchState::default();
+    }
+
+    /// Recompute all search matches for the given lines (case-insensitive).
+    pub fn recompute_matches(&mut self, lines: &[DiffLine]) {
+        self.search.matches.clear();
+        if self.search.query.is_empty() {
+            self.search.active = false;
+            return;
+        }
+        let query_lower = self.search.query.to_lowercase();
+        for (line_idx, dl) in lines.iter().enumerate() {
+            let text = dl.text();
+            let lower = text.to_lowercase();
+            let mut start = 0;
+            while let Some(pos) = lower[start..].find(&query_lower) {
+                let byte_start = start + pos;
+                let byte_end = byte_start + query_lower.len();
+                self.search.matches.push((line_idx, byte_start, byte_end));
+                start = byte_end;
+            }
+        }
+        self.search.active = !self.search.matches.is_empty();
+    }
+
+    fn jump_to_current_match(&mut self) {
+        if let Some(&(line_idx, _, _)) = self.search.matches.get(self.search.current_match) {
+            let target = (line_idx as u16).saturating_sub(5);
+            self.scroll = target.min(self.max_scroll());
+        }
+    }
+
+    fn first_match_from(&self, line: usize) -> usize {
+        self.search
+            .matches
+            .iter()
+            .position(|(li, _, _)| *li >= line)
+            .unwrap_or(0)
+    }
+
+    fn last_match_before(&self, line: usize) -> usize {
+        self.search
+            .matches
+            .iter()
+            .rposition(|(li, _, _)| *li <= line)
+            .unwrap_or(self.search.matches.len().saturating_sub(1))
     }
 }

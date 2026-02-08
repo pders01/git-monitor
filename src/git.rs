@@ -6,6 +6,15 @@ use anyhow::{bail, Context, Result};
 
 use crate::diff::{self, DiffLine};
 
+/// One entry from `git log`.
+#[derive(Debug, Clone)]
+pub struct CommitEntry {
+    pub hash: String,
+    pub message: String,
+    pub author: String,
+    pub date_relative: String,
+}
+
 /// Snapshot of everything we need from git to render one frame.
 pub struct RepoState {
     pub branch: String,
@@ -125,4 +134,31 @@ fn git_diff(repo: &Path, staged: bool) -> Result<String> {
         args.push("--cached");
     }
     run_git(repo, &args)
+}
+
+/// Fetch recent commits as structured entries.
+pub fn git_log(repo: &Path, count: usize) -> Result<Vec<CommitEntry>> {
+    let count_str = format!("-{count}");
+    let out = run_git(
+        repo,
+        &["log", "--format=%h%x00%s%x00%an%x00%ar", &count_str],
+    )?;
+    let mut entries = Vec::new();
+    for line in out.lines() {
+        let parts: Vec<&str> = line.splitn(4, '\0').collect();
+        if parts.len() == 4 {
+            entries.push(CommitEntry {
+                hash: parts[0].to_string(),
+                message: parts[1].to_string(),
+                author: parts[2].to_string(),
+                date_relative: parts[3].to_string(),
+            });
+        }
+    }
+    Ok(entries)
+}
+
+/// Get the full output of `git show <hash>` for piping to an external pager.
+pub fn git_show(repo: &Path, hash: &str) -> Result<String> {
+    run_git(repo, &["show", hash])
 }

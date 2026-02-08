@@ -13,6 +13,19 @@ pub enum DiffLine {
     Context(String),
 }
 
+impl DiffLine {
+    /// Return the inner text content regardless of variant.
+    pub fn text(&self) -> &str {
+        match self {
+            DiffLine::Header(s)
+            | DiffLine::Hunk(s)
+            | DiffLine::Added(s)
+            | DiffLine::Removed(s)
+            | DiffLine::Context(s) => s,
+        }
+    }
+}
+
 /// Parse the raw output of `git diff` into typed diff lines.
 ///
 /// Note: `--- a/` and `+++ b/` are matched as headers *before* checking
