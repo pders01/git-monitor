@@ -36,12 +36,8 @@ fn draw_diff_screen(frame: &mut Frame, app: &mut App, state: &RepoState) {
         DiffView::Unstaged => " Unstaged Changes ",
         DiffView::Staged => " Staged Changes ",
     };
-    let diff_lines = match app.view {
-        DiffView::Unstaged => &state.unstaged_diff,
-        DiffView::Staged => &state.staged_diff,
-    };
 
-    app.diff_line_count = diff_lines.len() as u16;
+    app.diff_line_count = app.visible_lines.len() as u16;
     app.viewport_height = chunks[1].height.saturating_sub(2);
 
     let max_scroll = app.diff_line_count.saturating_sub(app.viewport_height);
@@ -49,10 +45,12 @@ fn draw_diff_screen(frame: &mut Frame, app: &mut App, state: &RepoState) {
         app.scroll = max_scroll;
     }
 
-    let styled_lines: Vec<Line> = diff_lines
+    let term_width = chunks[1].width.saturating_sub(2) as usize; // minus block borders
+    let styled_lines: Vec<Line> = app
+        .visible_lines
         .iter()
         .enumerate()
-        .map(|(i, dl)| highlight_diff_line(dl, i, &app.search))
+        .map(|(i, dl)| highlight_diff_line(dl, i, &app.search, &app.collapsed, term_width))
         .collect();
 
     let diff_widget = Paragraph::new(styled_lines)
@@ -259,7 +257,7 @@ fn draw_help_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
             } else {
                 match app.screen {
                     Screen::Diff => {
-                        " q: quit | Tab: staged/unstaged | j/k: scroll | /: search | d: pager | l: log ".to_string()
+                        " q: quit | Tab: staged/unstaged | j/k: scroll | ]/[: file | Space: fold | C/E: all | /: search | d: pager | l: log ".to_string()
                     }
                     Screen::CommitLog => {
                         " q/Esc: back | j/k: navigate | Enter/d: view in pager | /: search ".to_string()
@@ -284,8 +282,25 @@ fn draw_help_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 // ── Diff line styling with search highlight ─────────────────────
 
 /// Map a `DiffLine` to a coloured `Line`, with search matches highlighted.
-fn highlight_diff_line<'a>(dl: &'a DiffLine, line_idx: usize, search: &SearchState) -> Line<'a> {
+fn highlight_diff_line(
+    dl: &DiffLine,
+    line_idx: usize,
+    search: &SearchState,
+    collapsed: &std::collections::HashSet<String>,
+    term_width: usize,
+) -> Line<'static> {
+    // Special rendering for file section headers
+    if let DiffLine::FileHeader {
+        filename,
+        added,
+        removed,
+    } = dl
+    {
+        return render_file_header(filename, *added, *removed, collapsed, term_width);
+    }
+
     let base_style = match dl {
+        DiffLine::FileHeader { .. } => unreachable!(),
         DiffLine::Header(_) => Style::default()
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD),
@@ -295,7 +310,7 @@ fn highlight_diff_line<'a>(dl: &'a DiffLine, line_idx: usize, search: &SearchSta
         DiffLine::Context(_) => Style::default(),
     };
 
-    let text = dl.text();
+    let text = dl.text().to_string();
 
     if !search.active || search.query.is_empty() || search.matches.is_empty() {
         return Line::from(Span::styled(text, base_style));
@@ -323,21 +338,71 @@ fn highlight_diff_line<'a>(dl: &'a DiffLine, line_idx: usize, search: &SearchSta
         let start = (*start).min(text.len());
         let end = (*end).min(text.len());
         if pos < start {
-            spans.push(Span::styled(&text[pos..start], base_style));
+            spans.push(Span::styled(text[pos..start].to_string(), base_style));
         }
         let highlight_style = if *is_current {
             Style::default().bg(Color::Red).fg(Color::White)
         } else {
             Style::default().bg(Color::Yellow).fg(Color::Black)
         };
-        spans.push(Span::styled(&text[start..end], highlight_style));
+        spans.push(Span::styled(text[start..end].to_string(), highlight_style));
         pos = end;
     }
     if pos < text.len() {
-        spans.push(Span::styled(&text[pos..], base_style));
+        spans.push(Span::styled(text[pos..].to_string(), base_style));
     }
 
     Line::from(spans)
+}
+
+/// Render a file section header: `▾/▸ filename   +N -M` with full-width bar.
+fn render_file_header(
+    filename: &str,
+    added: usize,
+    removed: usize,
+    collapsed: &std::collections::HashSet<String>,
+    term_width: usize,
+) -> Line<'static> {
+    let is_collapsed = collapsed.contains(filename);
+    let arrow = if is_collapsed { "▸ " } else { "▾ " };
+    let stats = format!("+{added} -{removed}");
+
+    let bg = Style::default()
+        .bg(Color::DarkGray)
+        .fg(Color::White)
+        .add_modifier(Modifier::BOLD);
+
+    // Calculate padding between filename and stats
+    let content_len = arrow.len() + filename.len() + stats.len() + 2; // +2 for spaces around stats
+    let padding = if term_width > content_len {
+        term_width - content_len
+    } else {
+        1
+    };
+
+    Line::from(vec![
+        Span::styled(arrow.to_string(), bg),
+        Span::styled(filename.to_string(), bg),
+        Span::styled(" ".repeat(padding), bg),
+        Span::styled(
+            format!("+{added}"),
+            Style::default()
+                .bg(Color::DarkGray)
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            " ".to_string(),
+            bg,
+        ),
+        Span::styled(
+            format!("-{removed}"),
+            Style::default()
+                .bg(Color::DarkGray)
+                .fg(Color::Red)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])
 }
 
 // ── Helpers ─────────────────────────────────────────────────────

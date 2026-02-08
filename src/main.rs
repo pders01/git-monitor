@@ -22,7 +22,8 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 
-use crate::app::{App, InputMode, Screen};
+use crate::app::{App, DiffView, InputMode, Screen};
+use crate::diff::FileDiff;
 use crate::event::AppEvent;
 use crate::git::RepoState;
 
@@ -120,6 +121,7 @@ fn run(
     let mut state = RepoState::query(repo).unwrap_or_else(|_| {
         RepoState::empty("Failed to query git state — is this a valid repo?")
     });
+    app.recompute_visible_lines(current_files(&app, &state));
 
     // ── Main event loop ─────────────────────────────────────────
     terminal.draw(|frame| ui::draw(frame, &mut app, &state))?;
@@ -136,9 +138,9 @@ fn run(
                     }
                 }
                 state = RepoState::query(repo).unwrap_or(state);
+                app.recompute_visible_lines(current_files(&app, &state));
                 if app.search.active {
-                    let lines = current_diff_lines(&app, &state);
-                    app.recompute_matches(&lines);
+                    app.recompute_matches(&app.visible_lines.clone());
                 }
             }
             AppEvent::Resize => {}
@@ -180,18 +182,18 @@ fn run(
     Ok(())
 }
 
-/// Return the diff lines for the current view (for search recompute on fs change).
-fn current_diff_lines(app: &App, state: &RepoState) -> Vec<diff::DiffLine> {
+/// Return the structured file diffs for the current view.
+fn current_files<'a>(app: &App, state: &'a RepoState) -> &'a [FileDiff] {
     match app.view {
-        app::DiffView::Unstaged => state.unstaged_diff.clone(),
-        app::DiffView::Staged => state.staged_diff.clone(),
+        DiffView::Unstaged => &state.unstaged_diff,
+        DiffView::Staged => &state.staged_diff,
     }
 }
 
 /// Dispatch a single key event based on current input mode and screen.
 fn handle_key(app: &mut App, key: KeyEvent, state: &RepoState, repo: &Path) {
     match app.input_mode {
-        InputMode::Search => handle_search_input(app, key, state),
+        InputMode::Search => handle_search_input(app, key),
         InputMode::Normal => match app.screen {
             Screen::Diff => handle_diff_key(app, key, state, repo),
             Screen::CommitLog => handle_commit_log_key(app, key, repo),
@@ -201,11 +203,11 @@ fn handle_key(app: &mut App, key: KeyEvent, state: &RepoState, repo: &Path) {
 
 // ── Search input mode ───────────────────────────────────────────
 
-fn handle_search_input(app: &mut App, key: KeyEvent, state: &RepoState) {
+fn handle_search_input(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => app.clear_search(),
         KeyCode::Enter => {
-            let lines = current_diff_lines(app, state);
+            let lines = app.visible_lines.clone();
             app.search_confirm(&lines);
         }
         KeyCode::Backspace => app.search_pop(),
@@ -223,7 +225,10 @@ fn handle_diff_key(app: &mut App, key: KeyEvent, state: &RepoState, repo: &Path)
             app.should_quit = true;
         }
         // View toggle
-        (KeyCode::Tab, _) => app.toggle_view(),
+        (KeyCode::Tab, _) => {
+            app.toggle_view();
+            app.recompute_visible_lines(current_files(app, state));
+        }
         // Basic scroll
         (KeyCode::Char('j') | KeyCode::Down, _) => app.scroll_down(1),
         (KeyCode::Char('k') | KeyCode::Up, _) => app.scroll_up(1),
@@ -239,19 +244,36 @@ fn handle_diff_key(app: &mut App, key: KeyEvent, state: &RepoState, repo: &Path)
         (KeyCode::Char('b'), KeyModifiers::CONTROL) | (KeyCode::PageUp, _) => {
             app.scroll_up(app.viewport_height)
         }
+        // File navigation
+        (KeyCode::Char(']'), _) => app.next_file(),
+        (KeyCode::Char('['), _) => app.prev_file(),
+        // File fold toggle
+        (KeyCode::Char(' '), _) => {
+            let files = current_files(app, state);
+            app.toggle_file_fold(files);
+        }
+        // Collapse / expand all
+        (KeyCode::Char('C'), _) => {
+            let files = current_files(app, state);
+            app.fold_all(files);
+        }
+        (KeyCode::Char('E'), _) => {
+            let files = current_files(app, state);
+            app.unfold_all(files);
+        }
         // Search
         (KeyCode::Char('/'), _) => app.enter_search(true),
         (KeyCode::Char('?'), _) => app.enter_search(false),
         (KeyCode::Char('n'), _) => app.search_next(),
         (KeyCode::Char('N'), _) => app.search_prev(),
         (KeyCode::Esc, _) => app.clear_search(),
-        // Pager
+        // Pager — sends visible (expanded) lines
         (KeyCode::Char('d'), KeyModifiers::NONE) => {
-            let lines = match app.view {
-                app::DiffView::Unstaged => &state.unstaged_diff,
-                app::DiffView::Staged => &state.staged_diff,
-            };
-            let content: String = lines.iter().map(|l| format!("{}\n", l.text())).collect();
+            let content: String = app
+                .visible_lines
+                .iter()
+                .map(|l| format!("{}\n", l.text()))
+                .collect();
             if !content.trim().is_empty() {
                 app.pager_content = Some(content);
             }

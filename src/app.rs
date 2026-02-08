@@ -1,4 +1,6 @@
-use crate::diff::DiffLine;
+use std::collections::HashSet;
+
+use crate::diff::{DiffLine, FileDiff};
 use crate::git::CommitEntry;
 
 /// Which diff view is currently displayed.
@@ -60,6 +62,13 @@ pub struct App {
     /// When set, the main loop should suspend the TUI and pipe this
     /// content to the user's pager.
     pub pager_content: Option<String>,
+
+    /// Filenames whose sections are currently collapsed.
+    pub collapsed: HashSet<String>,
+    /// Flattened diff lines including synthetic FileHeader entries.
+    pub visible_lines: Vec<DiffLine>,
+    /// Indices into `visible_lines` where FileHeader lines appear.
+    pub file_header_positions: Vec<usize>,
 }
 
 impl App {
@@ -76,6 +85,9 @@ impl App {
             commit_log: Vec::new(),
             commit_log_selected: 0,
             pager_content: None,
+            collapsed: HashSet::new(),
+            visible_lines: Vec::new(),
+            file_header_positions: Vec::new(),
         }
     }
 
@@ -124,6 +136,105 @@ impl App {
 
     fn max_scroll(&self) -> u16 {
         self.diff_line_count.saturating_sub(self.viewport_height)
+    }
+
+    // ── File sections (collapse / navigation) ──────────────────
+
+    /// Rebuild `visible_lines` and `file_header_positions` from structured file diffs.
+    pub fn recompute_visible_lines(&mut self, files: &[FileDiff]) {
+        self.visible_lines.clear();
+        self.file_header_positions.clear();
+
+        for fd in files {
+            // Skip empty-filename entries (e.g. from RepoState::empty)
+            if !fd.filename.is_empty() {
+                self.file_header_positions.push(self.visible_lines.len());
+                self.visible_lines.push(DiffLine::FileHeader {
+                    filename: fd.filename.clone(),
+                    added: fd.added,
+                    removed: fd.removed,
+                });
+            }
+
+            if !self.collapsed.contains(&fd.filename) {
+                self.visible_lines.extend(fd.lines.iter().cloned());
+            }
+        }
+
+        self.diff_line_count = self.visible_lines.len() as u16;
+        let max = self.max_scroll();
+        if self.scroll > max {
+            self.scroll = max;
+        }
+    }
+
+    /// Jump scroll to the next file header after the current position.
+    pub fn next_file(&mut self) {
+        let current = self.scroll as usize;
+        if let Some(&pos) = self
+            .file_header_positions
+            .iter()
+            .find(|&&p| p > current)
+        {
+            self.scroll = (pos as u16).min(self.max_scroll());
+        }
+    }
+
+    /// Jump scroll to the previous file header before the current position.
+    pub fn prev_file(&mut self) {
+        let current = self.scroll as usize;
+        if let Some(&pos) = self
+            .file_header_positions
+            .iter()
+            .rev()
+            .find(|&&p| p < current)
+        {
+            self.scroll = pos as u16;
+        }
+    }
+
+    /// Toggle the collapsed state of the file under the current viewport position.
+    pub fn toggle_file_fold(&mut self, files: &[FileDiff]) {
+        if let Some(name) = self.file_at_scroll() {
+            if self.collapsed.contains(&name) {
+                self.collapsed.remove(&name);
+            } else {
+                self.collapsed.insert(name);
+            }
+            self.recompute_visible_lines(files);
+        }
+    }
+
+    /// Collapse all file sections.
+    pub fn fold_all(&mut self, files: &[FileDiff]) {
+        for fd in files {
+            if !fd.filename.is_empty() {
+                self.collapsed.insert(fd.filename.clone());
+            }
+        }
+        self.recompute_visible_lines(files);
+    }
+
+    /// Expand all file sections.
+    pub fn unfold_all(&mut self, files: &[FileDiff]) {
+        self.collapsed.clear();
+        self.recompute_visible_lines(files);
+    }
+
+    /// Determine which file the current scroll position is inside of.
+    fn file_at_scroll(&self) -> Option<String> {
+        let pos = self.scroll as usize;
+        // Find the last file header at or before the scroll position
+        let header_idx = self
+            .file_header_positions
+            .iter()
+            .rposition(|&p| p <= pos)?;
+        let line = &self.visible_lines[self.file_header_positions[header_idx]];
+        if let DiffLine::FileHeader { filename, .. } = line {
+            Some(filename.clone())
+        } else {
+            None
+        }
     }
 
     // ── Commit log navigation ───────────────────────────────────

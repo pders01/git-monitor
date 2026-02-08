@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 
-use crate::diff::{self, DiffLine};
+use crate::diff::{self, FileDiff};
 
 /// One entry from `git log`.
 #[derive(Debug, Clone)]
@@ -22,8 +22,8 @@ pub struct RepoState {
     pub last_commit_message: Option<String>,
     pub staged_count: usize,
     pub unstaged_count: usize,
-    pub unstaged_diff: Vec<DiffLine>,
-    pub staged_diff: Vec<DiffLine>,
+    pub unstaged_diff: Vec<FileDiff>,
+    pub staged_diff: Vec<FileDiff>,
     pub refreshed_at: Instant,
 }
 
@@ -44,8 +44,8 @@ impl RepoState {
             last_commit_message: msg,
             staged_count: staged,
             unstaged_count: unstaged,
-            unstaged_diff: diff::parse(&unstaged_raw),
-            staged_diff: diff::parse(&staged_raw),
+            unstaged_diff: diff::parse_files(&unstaged_raw),
+            staged_diff: diff::parse_files(&staged_raw),
             refreshed_at: Instant::now(),
         })
     }
@@ -58,7 +58,12 @@ impl RepoState {
             last_commit_message: None,
             staged_count: 0,
             unstaged_count: 0,
-            unstaged_diff: vec![DiffLine::Context(reason.to_string())],
+            unstaged_diff: vec![FileDiff {
+                filename: String::new(),
+                added: 0,
+                removed: 0,
+                lines: vec![diff::DiffLine::Context(reason.to_string())],
+            }],
             staged_diff: vec![],
             refreshed_at: Instant::now(),
         }
