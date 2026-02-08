@@ -1,0 +1,14 @@
+[package]
+name = "git-monitor"
+version = "0.1.0"
+edition = "2021"
+description = "Live Git diff TUI — watches your repo and streams changes in real time"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.28"
+ignore = "0.4"
+notify = "7"
+notify-debouncer-mini = "0.5"
+ratatui = "0.29"
