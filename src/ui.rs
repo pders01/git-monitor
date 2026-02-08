@@ -26,18 +26,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &RepoState) {
     let short_sha = state
         .last_commit_hash
         .as_deref()
-        .map(|h| &h[..7.min(h.len())])
+        .filter(|h| h.len() >= 7)
+        .map(|h| &h[..7])
         .unwrap_or("-------");
     let commit_msg = state
         .last_commit_message
         .as_deref()
         .unwrap_or("(no commits)");
-    let timestamp = state
-        .last_updated
-        .as_deref()
-        .unwrap_or("");
+    let elapsed = state.refreshed_at.elapsed().as_secs();
+    let ago = if elapsed == 0 {
+        String::from("just now")
+    } else if elapsed < 60 {
+        format!("{elapsed}s ago")
+    } else {
+        format!("{}m ago", elapsed / 60)
+    };
     let status_text = format!(
-        " {branch} | {short_sha} {commit_msg} | {} staged, {} unstaged  {timestamp}",
+        " {branch} | {short_sha} {commit_msg} | {} staged, {} unstaged  {ago}",
         state.staged_count, state.unstaged_count,
     );
     let status_bar = Paragraph::new(Line::from(vec![Span::styled(
@@ -63,6 +68,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &RepoState) {
     app.diff_line_count = diff_lines.len() as u16;
     // viewport_height = diff area height minus 2 for the block borders
     app.viewport_height = chunks[1].height.saturating_sub(2);
+
+    // Clamp scroll if content shrank (e.g. after a commit or file revert)
+    let max_scroll = app.diff_line_count.saturating_sub(app.viewport_height);
+    if app.scroll > max_scroll {
+        app.scroll = max_scroll;
+    }
 
     let styled_lines: Vec<Line> = diff_lines.iter().map(style_diff_line).collect();
 

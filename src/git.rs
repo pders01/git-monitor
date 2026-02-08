@@ -1,7 +1,8 @@
 use std::path::Path;
 use std::process::Command;
+use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 use crate::diff::{self, DiffLine};
 
@@ -14,7 +15,7 @@ pub struct RepoState {
     pub unstaged_count: usize,
     pub unstaged_diff: Vec<DiffLine>,
     pub staged_diff: Vec<DiffLine>,
-    pub last_updated: Option<String>,
+    pub refreshed_at: Instant,
 }
 
 impl RepoState {
@@ -36,7 +37,7 @@ impl RepoState {
             unstaged_count: unstaged,
             unstaged_diff: diff::parse(&unstaged_raw),
             staged_diff: diff::parse(&staged_raw),
-            last_updated: None,
+            refreshed_at: Instant::now(),
         })
     }
 
@@ -50,7 +51,7 @@ impl RepoState {
             unstaged_count: 0,
             unstaged_diff: vec![DiffLine::Context(reason.to_string())],
             staged_diff: vec![],
-            last_updated: None,
+            refreshed_at: Instant::now(),
         }
     }
 }
@@ -63,6 +64,12 @@ fn run_git(repo: &Path, args: &[&str]) -> Result<String> {
         .args(args)
         .output()
         .with_context(|| format!("failed to run git {}", args.join(" ")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("git {} failed: {}", args.join(" "), stderr.trim());
+    }
+
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 

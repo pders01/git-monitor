@@ -59,11 +59,12 @@ fn should_notify(path: &Path, repo: &Path, git_dir: &PathBuf, gitignore: &Gitign
 
     // Working tree file — check gitignore
     if let Ok(relative) = path.strip_prefix(repo) {
-        let is_dir = path.is_dir();
+        let is_dir = path.metadata().map(|m| m.is_dir()).unwrap_or(false);
         return !gitignore.matched(relative, is_dir).is_ignore();
     }
 
-    true
+    // Path outside repo — ignore
+    false
 }
 
 /// Within `.git/`, only a few paths signal meaningful state changes.

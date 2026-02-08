@@ -24,6 +24,7 @@ pub fn parse(raw: &str) -> Vec<DiffLine> {
                 || line.starts_with("index ")
                 || line.starts_with("--- ")
                 || line.starts_with("+++ ")
+                || line.starts_with("Binary files ")
             {
                 DiffLine::Header(line.to_string())
             } else if line.starts_with("@@") {
